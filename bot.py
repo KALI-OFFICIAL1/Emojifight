@@ -48,13 +48,13 @@ def get_title(score: int):
 # --- Welcome Message ---
 WELCOME_IMAGE = "https://envs.sh/JBB.jpg"
 WELCOME_TEXT = """
-🔥 Welcome to **Emoji Fight Arena**! 🔥
+🔥 Welcome to **Emoji Fight Arena**! 🚀
 
 Choose your fighter:
 ⚔️ /animalfight — Use animal emojis  
 🔪 /weaponfight — Use weapon emojis  
 
-▶️ How to Play:  
+❄️ How to Play:  
 Reply to someone in a group with /animalfight or /weaponfight.  
 Then select your emoji and let the fight begin!
 """
