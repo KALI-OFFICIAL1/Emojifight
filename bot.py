@@ -1,11 +1,19 @@
 from pyrogram import Client, filters
-from pyrogram.types import Message
+from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 import random
+from datetime import datetime
+from pymongo import MongoClient
 
 # --- Config ---
 API_ID = "21546320"  # Replace with your API ID
 API_HASH = "c16805d6f2393d35e7c49527daa317c7"
 BOT_TOKEN = "7789344228:AAGLvdcqj70nezj817gJ9RstrAtrD9IMvpo"
+MONGO_URI = "mongodb+srv://Somu:Somu@somu.xbkiklu.mongodb.net/?retryWrites=true&w=majority&appName=Somu"
+
+# --- MongoDB Setup ---
+mongo = MongoClient(MONGO_URI)
+db = mongo["emoji_fight"]
+scores = db["scores"]
 
 # --- Emoji Stats ---
 ANIMAL_STATS = {
@@ -38,37 +46,35 @@ def get_title(score: int):
     return ""
 
 # --- Welcome Image and Message ---
-WELCOME_IMAGE = "https://yourdomain.com/emoji_fight_welcome.jpg"
+WELCOME_IMAGE = "https://envs.sh/JBB.jpg"
 WELCOME_TEXT = """
 🔥 Welcome to **Emoji Fight Arena**! 🔥
 
 Get ready to dive into a world of animals, weapons, and epic 1v1 battles!
 
 Choose your fighter:
-⚔️ /animalfight — Use animal emojis to battle
-🔪 /weaponfight — Use weapon emojis to fight your enemies
+⚔️ /animalfight — Use animal emojis to battle  
+🔪 /weaponfight — Use weapon emojis to fight your enemies  
 
-▶️ How to Play:
+▶️ How to Play:  
 Reply to someone in a group with /animalfight or /weaponfight and let the battle begin!
 
-Only the boldest will rise through the ranks to become the **God of Emojiland**.
-
+Only the boldest will rise through the ranks to become the **God of Emojiland**.  
 Let the war of emojis begin!
 """
 
 # --- Bot Init ---
 app = Client("emoji_fight_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-# --- /start Command ---
+# --- Start Command ---
 @app.on_message(filters.private & filters.command("start"))
 async def start_command(client, message: Message):
     await message.reply_photo(photo=WELCOME_IMAGE, caption=WELCOME_TEXT)
 
-# --- /list Command ---
+# --- List Command ---
 @app.on_message(filters.command("list"))
 async def list_emojis(client, message: Message):
-    text = "**🧾 Available Emojis:**\n\n"
-    text += "__Animals:__\n"
+    text = "**🧾 Available Emojis:**\n\n__Animals:__\n"
     for emoji, stats in ANIMAL_STATS.items():
         text += f"{emoji} {stats['name']} - Speed: {stats['speed']}/10 | Power: {stats['power']}/10\n"
     text += "\n__Weapons:__\n"
@@ -83,7 +89,6 @@ async def emoji_fight(message, stats_dict, emoji_type="animal"):
 
     fighter1 = message.from_user
     fighter2 = message.reply_to_message.from_user
-
     emoji1 = message.text.split(maxsplit=1)[-1].strip()
     emoji2 = message.reply_to_message.text.strip() if message.reply_to_message.text else None
 
@@ -95,25 +100,63 @@ async def emoji_fight(message, stats_dict, emoji_type="animal"):
 
     if score1 > score2:
         winner = fighter1
-        winner_emoji = emoji1
         loser = fighter2
+        winner_emoji = emoji1
     else:
         winner = fighter2
-        winner_emoji = emoji2
         loser = fighter1
+        winner_emoji = emoji2
 
-    title = get_title(150)  # Placeholder; later will use actual score
-    await message.reply_text(f"{title} {winner_emoji} **{winner.first_name}** defeated **{loser.first_name}** in a {emoji_type} fight!")
+    # --- Update MongoDB ---
+    scores.update_one(
+        {"user_id": winner.id},
+        {"$inc": {"score": 1}, "$set": {"name": winner.first_name, "last_win": datetime.utcnow()}},
+        upsert=True
+    )
 
-# --- /animalfight Command ---
+    user_data = scores.find_one({"user_id": winner.id})
+    title = get_title(user_data["score"])
+
+    await message.reply_text(f"{winner_emoji} **{winner.first_name}** {f'({title}) ' if title else ''}defeated **{loser.first_name}** in a {emoji_type} fight!")
+
+# --- Commands ---
 @app.on_message(filters.group & filters.command("animalfight"))
 async def animal_fight(client, message: Message):
     await emoji_fight(message, ANIMAL_STATS, "animal")
 
-# --- /weaponfight Command ---
 @app.on_message(filters.group & filters.command("weaponfight"))
 async def weapon_fight(client, message: Message):
     await emoji_fight(message, WEAPON_STATS, "weapon")
+
+# --- Leaderboard ---
+@app.on_message(filters.command("leaderboard"))
+async def leaderboard_cmd(client, message: Message):
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🏅 Today", callback_data="lb_today"),
+         InlineKeyboardButton("🌍 Global", callback_data="lb_global"),
+         InlineKeyboardButton("🏆 Overall", callback_data="lb_overall")]
+    ])
+    await message.reply("Choose leaderboard type:", reply_markup=keyboard)
+
+@app.on_callback_query(filters.regex("lb_"))
+async def leaderboard_buttons(client, callback_query):
+    lb_type = callback_query.data
+    now = datetime.utcnow()
+
+    if lb_type == "lb_today":
+        today = datetime(now.year, now.month, now.day)
+        users = scores.find({"last_win": {"$gte": today}})
+    elif lb_type == "lb_global":
+        users = scores.find({"score": {"$gte": 1}}).sort("last_win", -1)
+    else:  # lb_overall
+        users = scores.find().sort("score", -1)
+
+    text = f"**{callback_query.data.split('_')[1].capitalize()} Leaderboard**\n\n"
+    for i, user in enumerate(users.limit(10), 1):
+        title = get_title(user["score"])
+        text += f"{i}. {user.get('name', 'Unknown')} - {user['score']} pts {f'({title})' if title else ''}\n"
+
+    await callback_query.message.edit_text(text, reply_markup=callback_query.message.reply_markup)
 
 # --- Run Bot ---
 app.run()
